@@ -30,6 +30,7 @@ dependencies = [
     "sympy>=1.14",
     "scipy>=1.17.1",
     "pytest-xdist[psutil]>=3.8",
+    "matplotlib>=3.9",
 ]
 
 [dependency-groups]
