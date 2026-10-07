@@ -53,92 +53,58 @@ class Poisson2D:
         A : scipy sparse LIL matrix
             The vectorized Laplace operator
         """
-        raise NotImplementedError("The laplace method is not implemented yet.")
+        h = self.p.L / N
+        D2 = sparse.diags([1, -2, 1], [-1, 0, 1], (N + 1, N + 1))
+        D2x = D2 / h**2
+        D2y = D2 / h**2
+        return (sparse.kron(D2x, sparse.eye(N + 1)) +
+                sparse.kron(sparse.eye(N + 1), D2y)).tolil()
 
     def assemble(
         self, N: int, f: sp.Expr, ue: sp.Expr
     ) -> tuple[sparse.csr_matrix, np.ndarray]:
-        """Return assembled coefficient matrix A and right hand side vector b
+        xij, yij = self.create_mesh(N)
+        A = self.laplace(N)
+        b = self.meshfunction(f, xij, yij)
+        uexact = self.meshfunction(ue, xij, yij)
+        b = b.ravel()
+        uexact = uexact.ravel()
+        boundary = self.get_boundary_indices(N)
+        for i in boundary:
+            A.rows[i] = [i]
+            A.data[i] = [1.0]
+            b[i] = uexact[i]
 
-        Parameters
-        ----------
-        Nx : int
-            The number of uniform intervals in both x and y directions
-        f : Sympy expression
-            The right hand side as a Sympy expression in x and y
-        ue : Sympy expression
-            The exact solution as a Sympy expression in x and y
-
-        Returns
-        -------
-        A : scipy sparse CSR matrix
-            Coefficient matrix
-        b : 1D array
-            Right hand side vector
-
-        Note
-        ----
-        Compute the Kronecker product of the 1D Laplace operator with itself
-        to create the 2D Laplace operator. Then, assemble the right-hand side
-        vector b by evaluating the function f at the mesh points and applying
-        Dirichlet boundary conditions using the exact solution ue.
-
-        """
-        raise NotImplementedError("The assemble method is not implemented yet.")
+        return A.tocsr(), b
 
     def meshfunction(self, u: sp.Expr, xij: np.ndarray, yij: np.ndarray) -> np.ndarray:
-        """Return Sympy function as mesh function
-
-        Parameters
-        ----------
-        u : Sympy function
-
-        Returns
-        -------
-        array - The input function as a mesh function
-        """
-        raise NotImplementedError("The meshfunction method is not implemented yet.")
+        f = sp.lambdify((x, y), u, "numpy")
+        return np.asarray(f(xij, yij), dtype=float)
+    
 
     def get_boundary_indices(self, N: int) -> np.ndarray:
-        """Return indices of vectorized matrix that belongs to the boundary"""
-        raise NotImplementedError(
-            "The get_boundary_indices method is not implemented yet."
-        )
+        indices = np.arange((N + 1) ** 2).reshape((N + 1, N + 1))
+        boundary = np.concatenate([
+            indices[0, :],
+            indices[-1, :],
+            indices[1:-1, 0],
+            indices[1:-1, -1],
+        ])
+        return boundary
 
     def l2_error(self, u: np.ndarray, ue: sp.Expr) -> float:
-        """Return l2-error
-
-        Parameters
-        ----------
-        u : array
-            The numerical solution (mesh function)
-        ue : Sympy expression
-            The exact solution
-
-        Returns
-        -------
-        float - The l2-error
-
-        """
-        raise NotImplementedError("The l2_error method is not implemented yet.")
+        N = u.shape[0] - 1
+        h = self.p.L / N
+        xij, yij = self.create_mesh(N)
+        uexact = self.meshfunction(ue, xij, yij)
+        return np.sqrt(h**2 * np.sum((uexact - u)**2))
 
     def __call__(self, N: int, ue: sp.Expr) -> np.ndarray:
-        """Solve Poisson's equation with a given manufactured solution
-
-        Parameters
-        ----------
-        Nx : int
-            The number of uniform intervals in both x and y directions
-        ue : Sympy expression
-            The exact solution
-
-        Returns
-        -------
-        The solution as a Numpy array
-
-        """
-        A, b = self.assemble(N, sp.diff(ue, x, 2) + sp.diff(ue, y, 2), ue)
-        return sparse_linalg.spsolve(A, b.ravel()).reshape((N + 1, N + 1))
+        A, b = self.assemble(
+            N,
+            sp.diff(ue, x, 2) + sp.diff(ue, y, 2), 
+            ue)
+        return sparse_linalg.spsolve(A, b).reshape((N + 1, N + 1))
 
     def convergence_rates(self, ue: sp.Expr, m: int = 6):
         E = []
@@ -153,19 +119,28 @@ class Poisson2D:
         return r, np.array(E), np.array(h)
 
     def eval(self, U: np.ndarray, x: float, y: float) -> float:
-        """Return u(x, y)
+        N = U.shape[0] - 1
+        h = self.p.L / N
+        x = np.clip(x, 0, self.p.L)
+        y = np.clip(y, 0, self.p.L)
 
-        Parameters
-        ----------
-        x, y : numbers
-            The coordinates for evaluation
+        i = min(int(x / h), N - 1)
+        j = min(int(y / h), N - 1)
 
-        Returns
-        -------
-        The value of u(x, y)
+        tx = (x - i * h) / h
+        ty = (y - j * h) / h
 
-        """
-        raise NotImplementedError("The eval method is not implemented yet.")
+        u00 = U[i, j]
+        u10 = U[i + 1, j]
+        u01 = U[i, j + 1]
+        u11 = U[i + 1, j + 1]
+
+        return float(
+            (1 - tx) * (1 - ty) * u00
+            + tx * (1 - ty) * u10
+            + (1 - tx) * ty * u01
+            + tx * ty * u11
+        )
 
 
 def test_convergence_poisson2d():
@@ -190,3 +165,4 @@ if __name__ == "__main__":
     test_convergence_poisson2d()
     test_interpolation()
     print("All tests passed!")
+
